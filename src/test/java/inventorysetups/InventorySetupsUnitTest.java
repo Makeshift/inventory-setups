@@ -17,6 +17,7 @@ import net.runelite.client.config.RuneLiteConfig;
 import net.runelite.client.game.ItemManager;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 
 import net.runelite.client.plugins.banktags.BankTagsConfig;
 import net.runelite.client.plugins.banktags.BankTagsPlugin;
@@ -27,6 +28,7 @@ import net.runelite.client.plugins.banktags.BankTagsService;
 import net.runelite.client.plugins.banktags.TagManager;
 import net.runelite.client.plugins.banktags.tabs.LayoutManager;
 import net.runelite.client.plugins.banktags.tabs.TabInterface;
+import inventorysetups.serialization.InventorySetupSerializable;
 import net.runelite.client.ui.ClientToolbar;
 import org.junit.Before;
 import org.junit.Test;
@@ -121,6 +123,93 @@ public class InventorySetupsUnitTest
 		assertEquals(InventorySetupUtilities.parseTextInputAmount("102391273213291"), 2147483647);
 	}
 
+
+private InventorySetup createTestSetup(final String id, final String parentId, final String name, final int firstInventoryItemId)
+{
+List<InventorySetupsItem> inventory = new ArrayList<>(Collections.nCopies(28, InventorySetupsItem.getDummyItem()));
+inventory.set(0, new InventorySetupsItem(firstInventoryItemId, "item" + firstInventoryItemId, 1, false, InventorySetupsStackCompareID.None));
+List<InventorySetupsItem> equipment = new ArrayList<>(Collections.nCopies(14, InventorySetupsItem.getDummyItem()));
+return new InventorySetup(inventory, equipment, null, null, null, new HashMap<>(), name,
+"", inventorySetupsConfig.highlightColor(), false, inventorySetupsConfig.displayColor(), false, false,
+0, false, -1, "", id, parentId);
+}
+
+@Test
+public void testSerializableParentReferenceRoundTrip()
+{
+InventorySetup setup = createTestSetup("child-id", "parent-id", "Child", 1001);
+InventorySetupSerializable serialized = InventorySetupSerializable.convertFromInventorySetup(setup);
+InventorySetup deserialized = InventorySetupSerializable.convertToInventorySetup(serialized);
+
+assertEquals("child-id", deserialized.getSetupId());
+assertEquals("parent-id", deserialized.getParentSetupId());
+}
+
+@Test
+public void testSerializableWithoutParentDefaultsToNoParent()
+{
+InventorySetup setup = createTestSetup("setup-id", "", "Setup", 1001);
+InventorySetupSerializable serialized = InventorySetupSerializable.convertFromInventorySetup(setup);
+InventorySetup deserialized = InventorySetupSerializable.convertToInventorySetup(serialized);
+
+assertEquals("setup-id", deserialized.getSetupId());
+assertEquals("", deserialized.getParentSetupId());
+assertNull(serialized.getPId());
+}
+
+@Test
+public void testResolvedSetupInheritsAndOverridesItems()
+{
+InventorySetup parent = createTestSetup("parent-id", "", "Parent", 1001);
+InventorySetup child = createTestSetup("child-id", "parent-id", "Child", -1);
+child.getInventory().set(1, new InventorySetupsItem(2002, "child item", 1, false, InventorySetupsStackCompareID.None));
+child.getAdditionalFilteredItems().put(3003, new InventorySetupsItem(3003, "additional", 1, false, InventorySetupsStackCompareID.None));
+parent.getAdditionalFilteredItems().put(4004, new InventorySetupsItem(4004, "parent additional", 1, false, InventorySetupsStackCompareID.None));
+Map<String, InventorySetup> setupIds = new HashMap<>();
+setupIds.put(parent.getSetupId(), parent);
+setupIds.put(child.getSetupId(), child);
+
+InventorySetup resolved = InventorySetup.resolveSetup(child, setupIds);
+
+assertEquals(1001, resolved.getInventory().get(0).getId());
+assertEquals(2002, resolved.getInventory().get(1).getId());
+assertEquals(2, resolved.getAdditionalFilteredItems().size());
+}
+
+@Test
+public void testMissingAndCyclicParentsDoNotCrashResolution()
+{
+InventorySetup missingParent = createTestSetup("child-id", "missing-parent", "Child", 1001);
+assertEquals(missingParent, InventorySetup.resolveSetup(missingParent, new HashMap<>()));
+
+InventorySetup setupA = createTestSetup("a", "b", "A", 1001);
+InventorySetup setupB = createTestSetup("b", "a", "B", 2002);
+Map<String, InventorySetup> setupIds = new HashMap<>();
+setupIds.put(setupA.getSetupId(), setupA);
+setupIds.put(setupB.getSetupId(), setupB);
+
+InventorySetup resolved = InventorySetup.resolveSetup(setupA, setupIds);
+assertEquals("A", resolved.getName());
+}
+
+@Test
+public void testCacheTracksChildrenAcrossRenameAndDetach()
+{
+InventorySetupsCache cache = new InventorySetupsCache();
+InventorySetup parent = createTestSetup("parent-id", "", "Parent", 1001);
+InventorySetup child = createTestSetup("child-id", "parent-id", "Child", -1);
+cache.addSetup(parent);
+cache.addSetup(child);
+
+cache.updateSetupName(parent, "Renamed Parent");
+assertEquals(parent, cache.getInventorySetupIds().get("parent-id"));
+assertEquals(1, cache.getChildSetupsByParentId().get("parent-id").size());
+
+cache.updateParentSetup(child, "");
+assertFalse(child.hasParent());
+assertEquals(0, cache.getChildSetupsByParentId().get("parent-id").size());
+}
+
 	@Test
 	public void testSetupContainsItem()
 	{
@@ -132,7 +221,7 @@ public class InventorySetupsUnitTest
 		Map<Integer, InventorySetupsItem> addItems = new HashMap<>();
 		InventorySetup setup = new InventorySetup(inventory, equipment, runePouch, boltPouch, quiver, addItems, "Test",
 												"", inventorySetupsConfig.highlightColor(), false,
-												inventorySetupsConfig.displayColor(), false,false, 0, false, -1, "");
+												inventorySetupsConfig.displayColor(), false,false, 0, false, -1, "", "test-id", "");
 		inventorySetupsPlugin.startUp();
 		assertFalse(inventorySetupsPlugin.setupContainsItem(setup, ItemID.COAL, true, true));
 	}

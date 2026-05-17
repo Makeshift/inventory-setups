@@ -26,8 +26,12 @@ package inventorysetups;
 
 import java.awt.Color;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.Setter;
@@ -106,6 +110,14 @@ public class InventorySetup implements InventorySetupsDisplayAttributes
 	@Setter
 	private String attackOption;
 
+	@Getter
+	@Setter
+	private String setupId;
+
+	@Getter
+	@Setter
+	private String parentSetupId;
+
 	public void updateInventory(final List<InventorySetupsItem> inv)
 	{
 		inventory = inv;
@@ -144,6 +156,116 @@ public class InventorySetup implements InventorySetupsDisplayAttributes
 	public void updateNotes(final String text)
 	{
 		notes = text;
+	}
+
+	public boolean hasParent()
+	{
+		return parentSetupId != null && !parentSetupId.isEmpty();
+	}
+
+	public static InventorySetupsItem copyItem(final InventorySetupsItem item)
+	{
+		if (item == null)
+		{
+			return null;
+		}
+		return new InventorySetupsItem(item.getId(), item.getName(), item.getQuantity(), item.isFuzzy(), item.getStackCompare());
+	}
+
+	public static List<InventorySetupsItem> copyItemList(final List<InventorySetupsItem> items)
+	{
+		if (items == null)
+		{
+			return null;
+		}
+		List<InventorySetupsItem> copiedItems = new ArrayList<>();
+		for (final InventorySetupsItem item : items)
+		{
+			copiedItems.add(copyItem(item));
+		}
+		return copiedItems;
+	}
+
+	public static Map<Integer, InventorySetupsItem> copyItemMap(final Map<Integer, InventorySetupsItem> items)
+	{
+		Map<Integer, InventorySetupsItem> copiedItems = new HashMap<>();
+		if (items != null)
+		{
+			for (final Integer key : items.keySet())
+			{
+				copiedItems.put(key, copyItem(items.get(key)));
+			}
+		}
+		return copiedItems;
+	}
+
+
+	private static List<InventorySetupsItem> resolveContainer(final List<InventorySetupsItem> parentItems, final List<InventorySetupsItem> childItems)
+	{
+		if (parentItems == null)
+		{
+			return copyItemList(childItems);
+		}
+		if (childItems == null)
+		{
+			return copyItemList(parentItems);
+		}
+
+		List<InventorySetupsItem> resolvedItems = copyItemList(parentItems);
+		for (int i = 0; i < childItems.size(); i++)
+		{
+			final InventorySetupsItem childItem = childItems.get(i);
+			if (!InventorySetupsItem.itemIsDummy(childItem))
+			{
+				while (resolvedItems.size() <= i)
+				{
+					resolvedItems.add(InventorySetupsItem.getDummyItem());
+				}
+				resolvedItems.set(i, copyItem(childItem));
+			}
+		}
+		return resolvedItems;
+	}
+
+	public static InventorySetup resolveSetup(final InventorySetup setup, final Map<String, InventorySetup> setupIds)
+	{
+		return resolveSetup(setup, setupIds, new HashSet<>());
+	}
+
+	private static InventorySetup resolveSetup(final InventorySetup setup, final Map<String, InventorySetup> setupIds, final Set<String> visitedSetupIds)
+	{
+		if (setup == null || !setup.hasParent())
+		{
+			return setup;
+		}
+
+		final String setupId = setup.getSetupId();
+		if (setupId != null && !setupId.isEmpty() && !visitedSetupIds.add(setupId))
+		{
+			return setup;
+		}
+
+		final InventorySetup parentSetup = setupIds.get(setup.getParentSetupId());
+		if (parentSetup == null || parentSetup == setup)
+		{
+			return setup;
+		}
+
+		final InventorySetup resolvedParent = resolveSetup(parentSetup, setupIds, visitedSetupIds);
+		Map<Integer, InventorySetupsItem> additionalItems = new LinkedHashMap<>();
+		additionalItems.putAll(copyItemMap(resolvedParent.getAdditionalFilteredItems()));
+		additionalItems.putAll(copyItemMap(setup.getAdditionalFilteredItems()));
+
+		return new InventorySetup(
+			resolveContainer(resolvedParent.getInventory(), setup.getInventory()),
+			resolveContainer(resolvedParent.getEquipment(), setup.getEquipment()),
+			resolveContainer(resolvedParent.getRune_pouch(), setup.getRune_pouch()),
+			resolveContainer(resolvedParent.getBoltPouch(), setup.getBoltPouch()),
+			resolveContainer(resolvedParent.getQuiver(), setup.getQuiver()),
+			additionalItems,
+			setup.getName(), setup.getNotes(), setup.getHighlightColor(), setup.isHighlightDifference(), setup.getDisplayColor(),
+			setup.isFilterBank(), setup.isUnorderedHighlight(), setup.getSpellBook(), setup.isFavorite(), setup.getIconID(),
+			setup.getAttackOption(), setup.getSetupId(), setup.getParentSetupId());
 	}
 
 	public static List<InventorySetupsItem> getSetupItems(final InventorySetup setup)

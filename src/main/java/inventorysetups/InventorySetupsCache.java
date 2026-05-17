@@ -2,6 +2,8 @@ package inventorysetups;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.Getter;
 
 // Class to assist with speeding up operations by caching names when the config is loaded
@@ -13,11 +15,21 @@ public class InventorySetupsCache
 		this.sectionNames = new HashMap<>();
 		this.setupSectionsMap = new HashMap<>();
 		this.sectionSetupsMap = new HashMap<>();
+		this.inventorySetupIds = new HashMap<>();
+		this.childSetupsByParentId = new HashMap<>();
 	}
 
 	public void addSetup(final InventorySetup setup)
 	{
 		inventorySetupNames.put(setup.getName(), setup);
+		if (setup.getSetupId() != null && !setup.getSetupId().isEmpty())
+		{
+			inventorySetupIds.put(setup.getSetupId(), setup);
+		}
+		if (setup.hasParent())
+		{
+			childSetupsByParentId.computeIfAbsent(setup.getParentSetupId(), key -> new ArrayList<>()).add(setup);
+		}
 		setupSectionsMap.put(setup.getName(), new HashMap<>());
 	}
 
@@ -72,9 +84,30 @@ public class InventorySetupsCache
 		sectionSetupsMap.put(newName, sectionSetupsMap.remove(section.getName()));
 	}
 
+	public void updateParentSetup(final InventorySetup setup, final String newParentSetupId)
+	{
+		if (setup.hasParent() && childSetupsByParentId.containsKey(setup.getParentSetupId()))
+		{
+			childSetupsByParentId.get(setup.getParentSetupId()).remove(setup);
+		}
+		setup.setParentSetupId(newParentSetupId == null ? "" : newParentSetupId);
+		if (setup.hasParent())
+		{
+			childSetupsByParentId.computeIfAbsent(setup.getParentSetupId(), key -> new ArrayList<>()).add(setup);
+		}
+	}
+
 	public void removeSetup(final InventorySetup setup)
 	{
 		inventorySetupNames.remove(setup.getName());
+		if (setup.getSetupId() != null)
+		{
+			inventorySetupIds.remove(setup.getSetupId());
+		}
+		if (setup.hasParent() && childSetupsByParentId.containsKey(setup.getParentSetupId()))
+		{
+			childSetupsByParentId.get(setup.getParentSetupId()).remove(setup);
+		}
 		setupSectionsMap.remove(setup.getName());
 
 		// Remove the setup for each section in the section -> setups map
@@ -114,6 +147,8 @@ public class InventorySetupsCache
 		sectionNames.clear();
 		setupSectionsMap.clear();
 		sectionSetupsMap.clear();
+		inventorySetupIds.clear();
+		childSetupsByParentId.clear();
 	}
 
 	// Mapping from inventory setup name -> inventory setup object
@@ -133,4 +168,10 @@ public class InventorySetupsCache
 	// Useful for determining the intersection of setups to display and setups in a section
 	@Getter
 	private final Map<String, Map<String, InventorySetup>> sectionSetupsMap;
+
+	@Getter
+	private final Map<String, InventorySetup> inventorySetupIds;
+
+	@Getter
+	private final Map<String, List<InventorySetup>> childSetupsByParentId;
 }

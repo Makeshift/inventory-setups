@@ -42,8 +42,10 @@ import java.awt.*;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import inventorysetups.serialization.InventorySetupPortable;
@@ -162,6 +164,8 @@ public class InventorySetupsPluginPanel extends PluginPanel
 	@Getter
 	private List<InventorySetup> filteredInventorysetups;
 
+	private final Map<String, Integer> setupTreeDepth;
+
 	static
 	{
 		final BufferedImage helpIcon = ImageUtil.loadImageResource(InventorySetupsPlugin.class, "/help_button.png");
@@ -235,6 +239,7 @@ public class InventorySetupsPluginPanel extends PluginPanel
 		this.overviewTopPanel = new JPanel();
 		this.overviewPanelScrollPosition = 0;
 		this.filteredInventorysetups = new ArrayList<>();
+		this.setupTreeDepth = new HashMap<>();
 		this.hasDisplayedLayoutWarning = false;
 
 		// setup the title
@@ -688,6 +693,7 @@ public class InventorySetupsPluginPanel extends PluginPanel
 			filteredInventorysetups.sort(Comparator.comparing(InventorySetup::getName, String.CASE_INSENSITIVE_ORDER));
 		}
 
+		filteredInventorysetups = flattenSetupsForTree(filteredInventorysetups);
 		layoutSetups(filteredInventorysetups);
 		returnToOverviewPanel(resetScrollBar);
 
@@ -754,13 +760,14 @@ public class InventorySetupsPluginPanel extends PluginPanel
 	{
 		overviewPanelScrollPosition = contentWrapperPane.getVerticalScrollBar().getValue();
 		currentSelectedSetup = inventorySetup;
-		inventoryPanel.updatePanelWithSetupInformation(inventorySetup);
-		runePouchPanel.updatePanelWithSetupInformation(inventorySetup);
-		boltPouchPanel.updatePanelWithSetupInformation(inventorySetup);
-		equipmentPanel.updatePanelWithSetupInformation(inventorySetup);
-		spellbookPanel.updatePanelWithSetupInformation(inventorySetup);
-		additionalFilteredItemsPanel.updatePanelWithSetupInformation(inventorySetup);
-		notesPanel.updatePanelWithSetupInformation(inventorySetup);
+		InventorySetup displaySetup = plugin.getResolvedSetup(inventorySetup);
+		inventoryPanel.updatePanelWithSetupInformation(displaySetup);
+		runePouchPanel.updatePanelWithSetupInformation(displaySetup);
+		boltPouchPanel.updatePanelWithSetupInformation(displaySetup);
+		equipmentPanel.updatePanelWithSetupInformation(displaySetup);
+		spellbookPanel.updatePanelWithSetupInformation(displaySetup);
+		additionalFilteredItemsPanel.updatePanelWithSetupInformation(displaySetup);
+		notesPanel.updatePanelWithSetupInformation(displaySetup);
 
 		overviewTopPanel.setVisible(false);
 		setupTopPanel.setVisible(true);
@@ -774,8 +781,8 @@ public class InventorySetupsPluginPanel extends PluginPanel
 		searchBar.setVisible(false);
 
 		// only show the rune pouch if the setup has a rune pouch
-		runePouchPanel.setVisible(currentSelectedSetup.getRune_pouch() != null);
-		boltPouchPanel.setVisible(currentSelectedSetup.getBoltPouch() != null);
+		runePouchPanel.setVisible(displaySetup.getRune_pouch() != null);
+		boltPouchPanel.setVisible(displaySetup.getBoltPouch() != null);
 
 		plugin.getClientThread().invoke(this::doHighlighting);
 
@@ -806,26 +813,32 @@ public class InventorySetupsPluginPanel extends PluginPanel
 
 		final List<InventorySetupsItem> inv = plugin.getNormalizedContainer(InventoryID.INV);
 		final List<InventorySetupsItem> eqp = plugin.getNormalizedContainer(InventoryID.WORN);
+		final InventorySetup setupToHighlight = plugin.getResolvedSetup(currentSelectedSetup);
 
-		highlightContainerPanel(inv, inventoryPanel);
-		highlightContainerPanel(eqp, equipmentPanel);
+		highlightContainerPanel(inv, inventoryPanel, setupToHighlight);
+		highlightContainerPanel(eqp, equipmentPanel, setupToHighlight);
 		// pass spellbook a dummy container because it only needs the current selected setup
-		highlightContainerPanel(null, spellbookPanel);
-		plugin.getAmmoHandler().handleSpecialHighlighting(currentSelectedSetup, inv, eqp);
+		highlightContainerPanel(null, spellbookPanel, setupToHighlight);
+		plugin.getAmmoHandler().handleSpecialHighlighting(setupToHighlight, inv, eqp);
 
 	}
 
 	public void highlightContainerPanel(final List<InventorySetupsItem> container, final InventorySetupsContainerPanel containerPanel)
 	{
+		highlightContainerPanel(container, containerPanel, plugin.getResolvedSetup(currentSelectedSetup));
+	}
+
+	public void highlightContainerPanel(final List<InventorySetupsItem> container, final InventorySetupsContainerPanel containerPanel, final InventorySetup setupToHighlight)
+	{
 		// if the panel is visible, check if highlighting is enabled on the setup and globally
 		// if any of the two, reset the slots so they aren't highlighted
-		if (!currentSelectedSetup.isHighlightDifference() || !plugin.isHighlightingAllowed())
+		if (setupToHighlight == null || !setupToHighlight.isHighlightDifference() || !plugin.isHighlightingAllowed())
 		{
 			containerPanel.resetSlotColors();
 			return;
 		}
 
-		containerPanel.highlightSlots(container, currentSelectedSetup);
+		containerPanel.highlightSlots(container, setupToHighlight);
 	}
 
 	public void highlightInventory()
@@ -920,6 +933,56 @@ public class InventorySetupsPluginPanel extends PluginPanel
 		contentWrapperPane.getVerticalScrollBar().setValue(scrollbarValue);
 	}
 
+
+	private List<InventorySetup> flattenSetupsForTree(final List<InventorySetup> setups)
+	{
+		setupTreeDepth.clear();
+		Set<String> includedIds = setups.stream().map(InventorySetup::getSetupId).collect(Collectors.toSet());
+		for (final InventorySetup setup : setups)
+		{
+			InventorySetup parent = plugin.getCache().getInventorySetupIds().get(setup.getParentSetupId());
+			while (parent != null && parent != setup && includedIds.add(parent.getSetupId()))
+			{
+				parent = plugin.getCache().getInventorySetupIds().get(parent.getParentSetupId());
+			}
+		}
+
+		List<InventorySetup> flattenedSetups = new ArrayList<>();
+		Set<String> addedIds = new HashSet<>();
+		for (final InventorySetup setup : plugin.getInventorySetups())
+		{
+			if (!includedIds.contains(setup.getSetupId()))
+			{
+				continue;
+			}
+			InventorySetup parent = plugin.getCache().getInventorySetupIds().get(setup.getParentSetupId());
+			if (parent == null || !includedIds.contains(parent.getSetupId()))
+			{
+				addSetupAndChildren(flattenedSetups, addedIds, includedIds, setup, 0);
+			}
+		}
+		return flattenedSetups;
+	}
+
+	private void addSetupAndChildren(final List<InventorySetup> flattenedSetups, final Set<String> addedIds, final Set<String> includedIds, final InventorySetup setup, final int depth)
+	{
+		if (setup == null || setup.getSetupId() == null || !includedIds.contains(setup.getSetupId()) || !addedIds.add(setup.getSetupId()))
+		{
+			return;
+		}
+		setupTreeDepth.put(setup.getSetupId(), depth);
+		flattenedSetups.add(setup);
+		final List<InventorySetup> children = plugin.getCache().getChildSetupsByParentId().get(setup.getSetupId());
+		if (children == null)
+		{
+			return;
+		}
+		for (final InventorySetup child : children)
+		{
+			addSetupAndChildren(flattenedSetups, addedIds, includedIds, child, depth + 1);
+		}
+	}
+
 	// Layout setups according
 	private void layoutSetups(List<InventorySetup> originalFilteredSetups)
 	{
@@ -959,7 +1022,10 @@ public class InventorySetupsPluginPanel extends PluginPanel
 					{
 						newPanel = new InventorySetupsStandardPanel(plugin, this, setup, null);
 					}
-					overviewPanel.add(newPanel, constraints);
+					JPanel setupWrapper = new JPanel(new BorderLayout());
+					setupWrapper.add(Box.createRigidArea(new Dimension(setupTreeDepth.getOrDefault(setup.getSetupId(), 0) * 12, 0)), BorderLayout.WEST);
+					setupWrapper.add(newPanel, BorderLayout.CENTER);
+					overviewPanel.add(setupWrapper, constraints);
 					constraints.gridy++;
 
 					overviewPanel.add(Box.createRigidArea(new Dimension(0, 10)), constraints);

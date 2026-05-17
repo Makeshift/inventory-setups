@@ -376,7 +376,7 @@ public class InventorySetupsStandardPanel extends InventorySetupsPanel implement
 
 		JPopupMenu singleExportBankTagTabMenu = new JPopupMenu();
 		JMenuItem singleExportBankTagTabMenuItem = new JMenuItem("Export setup to Bank Tag Tab");
-		singleExportBankTagTabMenuItem.addActionListener(e -> plugin.getClientThread().invokeLater(() -> plugin.getLayoutUtilities().exportSetupToBankTagTab(inventorySetup, panel)));
+		singleExportBankTagTabMenuItem.addActionListener(e -> plugin.getClientThread().invokeLater(() -> plugin.getLayoutUtilities().exportSetupToBankTagTab(plugin.getResolvedSetup(inventorySetup), panel)));
 		singleExportBankTagTabMenu.add(singleExportBankTagTabMenuItem);
 		exportLabel.setToolTipText("Export setup");
 		exportLabel.setIcon(EXPORT_ICON);

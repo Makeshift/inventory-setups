@@ -250,6 +250,14 @@ public class InventorySetupsPersistentDataManager
 		final boolean hasMigratedToCoreBTL = !Strings.isNullOrEmpty(migratedCoreBTL) && migratedCoreBTL.equals("true");
 		for (final InventorySetup setup : inventorySetups)
 		{
+			if (Strings.isNullOrEmpty(setup.getSetupId()))
+			{
+				setup.setSetupId(hashFunction.hashUnencodedChars(setup.getName()).toString());
+			}
+			if (setup.getSetupId().equals(setup.getParentSetupId()))
+			{
+				setup.setParentSetupId("");
+			}
 			final List<InventorySetupsItem> potentialRunePouch = plugin.getAmmoHandler().getRunePouchDataIfInContainer(setup.getInventory());
 			if (setup.getRune_pouch() == null && potentialRunePouch != null)
 			{

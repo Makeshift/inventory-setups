@@ -48,8 +48,10 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -824,7 +826,7 @@ public class InventorySetupsPlugin extends Plugin
 			// We can add tags after if the user likes the layout.
 			// This stops the case that somebody removed a tag from the inventory setup
 			// And this layout won't accidentally bring it back if they decide not to use it.
-			final Layout new_ = layoutUtilities.createSetupLayout(setup, type, false);
+			final Layout new_ = layoutUtilities.createSetupLayout(getResolvedSetup(setup), type, false);
 
 			// Temporarily save the new layout to open the tag.
 			layoutManager.saveLayout(new_);
@@ -841,7 +843,7 @@ public class InventorySetupsPlugin extends Plugin
 						clientThread.invoke(() ->
 						{
 							// Need this to be in a client thread invoke in case the user types 1 instead.
-							layoutUtilities.createSetupLayout(setup, type, true);
+							layoutUtilities.createSetupLayout(getResolvedSetup(setup), type, true);
 							layoutManager.saveLayout(new_);
 						});
 
@@ -1001,6 +1003,27 @@ public class InventorySetupsPlugin extends Plugin
 	}
 
 
+	private String generateSetupId()
+	{
+		return UUID.randomUUID().toString();
+	}
+
+	private List<InventorySetupsItem> createDummyItemList(final int size)
+	{
+		List<InventorySetupsItem> items = new ArrayList<>();
+		for (int i = 0; i < size; i++)
+		{
+			items.add(InventorySetupsItem.getDummyItem());
+		}
+		return items;
+	}
+
+	public InventorySetup getResolvedSetup(final InventorySetup setup)
+	{
+		return InventorySetup.resolveSetup(setup, cache.getInventorySetupIds());
+	}
+
+
 	public void addInventorySetup()
 	{
 		final String msg = "Enter the name of this setup (max " + MAX_SETUP_NAME_LENGTH + " chars).";
@@ -1052,18 +1075,78 @@ public class InventorySetupsPlugin extends Plugin
 				config.enableDisplayColor() ? config.displayColor() : null,
 				config.bankFilter(),
 				config.highlightUnorderedDifference(),
-				spellbook, false, -1, attackOption);
+				spellbook, false, -1, attackOption, generateSetupId(), "");
 
 			cache.addSetup(invSetup);
 			inventorySetups.add(invSetup);
 			dataManager.updateConfig(true, false);
 
-			Layout setupLayout = layoutUtilities.createSetupLayout(invSetup);
+			Layout setupLayout = layoutUtilities.createSetupLayout(getResolvedSetup(invSetup));
 			layoutManager.saveLayout(setupLayout);
 			tagManager.setHidden(setupLayout.getTag(), true);
 
 			SwingUtilities.invokeLater(() -> panel.redrawOverviewPanel(false));
 
+		});
+	}
+
+
+	public void addExtendedInventorySetup(final InventorySetup parentSetup)
+	{
+		final String msg = "Enter the name of this setup (max " + MAX_SETUP_NAME_LENGTH + " chars).";
+		String name = JOptionPane.showInputDialog(panel, msg, "Extend Setup", JOptionPane.PLAIN_MESSAGE);
+		if (name == null || name.isEmpty())
+		{
+			return;
+		}
+		if (name.length() > MAX_SETUP_NAME_LENGTH)
+		{
+			name = name.substring(0, MAX_SETUP_NAME_LENGTH);
+		}
+		if (cache.getInventorySetupNames().containsKey(name))
+		{
+			JOptionPane.showMessageDialog(panel,
+				"A setup with the name " + name + " already exists",
+				"Setup Already Exists",
+				JOptionPane.ERROR_MESSAGE);
+			return;
+		}
+		if (parentSetup.getSetupId() == null || parentSetup.getSetupId().isEmpty())
+		{
+			parentSetup.setSetupId(generateSetupId());
+		}
+
+		final InventorySetup childSetup = new InventorySetup(
+			createDummyItemList(NUM_INVENTORY_ITEMS),
+			createDummyItemList(NUM_EQUIPMENT_ITEMS),
+			null,
+			null,
+			null,
+			new LinkedHashMap<>(),
+			name,
+			"",
+			parentSetup.getHighlightColor(),
+			parentSetup.isHighlightDifference(),
+			parentSetup.getDisplayColor(),
+			parentSetup.isFilterBank(),
+			parentSetup.isUnorderedHighlight(),
+			parentSetup.getSpellBook(),
+			false,
+			parentSetup.getIconID(),
+			parentSetup.getAttackOption(),
+			generateSetupId(),
+			parentSetup.getSetupId());
+
+		cache.addSetup(childSetup);
+		inventorySetups.add(inventorySetups.indexOf(parentSetup) + 1, childSetup);
+		dataManager.updateConfig(true, false);
+
+		clientThread.invokeLater(() ->
+		{
+			Layout setupLayout = layoutUtilities.createSetupLayout(getResolvedSetup(childSetup));
+			layoutManager.saveLayout(setupLayout);
+			tagManager.setHidden(setupLayout.getTag(), true);
+			SwingUtilities.invokeLater(() -> panel.redrawOverviewPanel(false));
 		});
 	}
 
@@ -1189,20 +1272,21 @@ public class InventorySetupsPlugin extends Plugin
 			.collect(Collectors.toList());
 	}
 
-	private static boolean shouldDisplaySetup(InventorySetup inventorySetup, String trimmedTextToFilterLower)
+	private boolean shouldDisplaySetup(InventorySetup inventorySetup, String trimmedTextToFilterLower)
 	{
+		InventorySetup setupToSearch = getResolvedSetup(inventorySetup);
 		if (trimmedTextToFilterLower.startsWith(ITEM_SEARCH_TAG) && trimmedTextToFilterLower.length() > ITEM_SEARCH_TAG.length())
 		{
 			String itemName = trimmedTextToFilterLower.substring(ITEM_SEARCH_TAG.length()).trim();
 			// Find setups containing the given item name
-			return containerContainsItemByName(inventorySetup.getInventory(), itemName) || containerContainsItemByName(inventorySetup.getEquipment(), itemName)
-				|| containerContainsItemByName(inventorySetup.getRune_pouch(), itemName) || containerContainsItemByName(inventorySetup.getAdditionalFilteredItems().values(), itemName)
-				|| containerContainsItemByName(inventorySetup.getBoltPouch(), itemName);
+			return containerContainsItemByName(setupToSearch.getInventory(), itemName) || containerContainsItemByName(setupToSearch.getEquipment(), itemName)
+				|| containerContainsItemByName(setupToSearch.getRune_pouch(), itemName) || containerContainsItemByName(setupToSearch.getAdditionalFilteredItems().values(), itemName)
+				|| containerContainsItemByName(setupToSearch.getBoltPouch(), itemName);
 		}
 		else if (trimmedTextToFilterLower.startsWith(NOTES_SEARCH_TAG) && trimmedTextToFilterLower.length() > NOTES_SEARCH_TAG.length())
 		{
 			String noteText = trimmedTextToFilterLower.substring(NOTES_SEARCH_TAG.length()).trim();
-			return inventorySetup.getNotes().toLowerCase().contains(noteText);
+			return setupToSearch.getNotes().toLowerCase().contains(noteText);
 		}
 		// Find setups containing the given setup name (default behaviour)
 		return inventorySetup.getName().toLowerCase().contains(trimmedTextToFilterLower);
@@ -1241,6 +1325,8 @@ public class InventorySetupsPlugin extends Plugin
 				return;
 			}
 
+			final InventorySetup resolvedCurrentSetup = getResolvedSetup(currentSelectedSetup);
+			layoutUtilities.recalculateLayout(resolvedCurrentSetup);
 			final String tagName = InventorySetupLayoutUtilities.getTagNameForLayout(currentSelectedSetup.getName());
 			if (!config.useLayouts())
 			{
@@ -1326,7 +1412,7 @@ public class InventorySetupsPlugin extends Plugin
 			final InventorySetupsItem setupItem = new InventorySetupsItem(processedItemId, name, 1, config.fuzzy(), stackCompareType);
 
 			additionalFilteredItems.put(processedItemId, setupItem);
-			layoutUtilities.recalculateLayout(setup);
+			layoutUtilities.recalculateLayout(getResolvedSetup(setup));
 			dataManager.updateConfig(true, false);
 			panel.refreshCurrentSetup();
 		});
@@ -1480,7 +1566,7 @@ public class InventorySetupsPlugin extends Plugin
 				tagManager.removeTag(tagName);
 				layoutManager.removeLayout(tagName);
 
-				Layout newLayout = layoutUtilities.createSetupLayout(setup);
+				Layout newLayout = layoutUtilities.createSetupLayout(getResolvedSetup(setup));
 				layoutManager.saveLayout(newLayout);
 			});
 
@@ -1527,7 +1613,7 @@ public class InventorySetupsPlugin extends Plugin
 			boolean eqpUpdated = updateAllInstancesInContainerSetupWithNewItem(inventorySetup, inventorySetup.getEquipment(), oldItem, newItem, InventorySetupsSlotID.EQUIPMENT);
 			if (invUpdated || eqpUpdated)
 			{
-				layoutUtilities.recalculateLayout(inventorySetup);
+				layoutUtilities.recalculateLayout(getResolvedSetup(inventorySetup));
 			}
 		}
 	}
@@ -1565,7 +1651,7 @@ public class InventorySetupsPlugin extends Plugin
 				ammoHandler.handleSpecialAmmo(slot.getParentSetup(), oldItem, newItem);
 				handleUpdatingInSpecialSlots(slot);
 				containerToUpdate.set(slot.getIndexInSlot(), newItem);
-				layoutUtilities.recalculateLayout(slot.getParentSetup());
+				layoutUtilities.recalculateLayout(getResolvedSetup(slot.getParentSetup()));
 			}
 
 			dataManager.updateConfig(true, false);
@@ -1617,7 +1703,7 @@ public class InventorySetupsPlugin extends Plugin
 				ammoHandler.handleSpecialAmmo(slot.getParentSetup(), itemToBeReplaced, newItem);
 				container.set(slot.getIndexInSlot(), newItem);
 				handleUpdatingInSpecialSlots(slot);
-				layoutUtilities.recalculateLayout(slot.getParentSetup());
+				layoutUtilities.recalculateLayout(getResolvedSetup(slot.getParentSetup()));
 			}
 
 			SwingUtilities.invokeLater(() ->
@@ -1755,7 +1841,7 @@ public class InventorySetupsPlugin extends Plugin
 			if (slot.getSlotID() == InventorySetupsSlotID.ADDITIONAL_ITEMS)
 			{
 				removeAdditionalFilteredItem(slot, panel.getCurrentSelectedSetup().getAdditionalFilteredItems());
-				layoutUtilities.recalculateLayout(panel.getCurrentSelectedSetup());
+				layoutUtilities.recalculateLayout(getResolvedSetup(panel.getCurrentSelectedSetup()));
 				dataManager.updateConfig(true, false);
 				panel.refreshCurrentSetup();
 				return;
@@ -1774,7 +1860,7 @@ public class InventorySetupsPlugin extends Plugin
 			// Update the layout
 			if (itemToBeReplaced.getId() != -1)
 			{
-				layoutUtilities.recalculateLayout(slot.getParentSetup());
+				layoutUtilities.recalculateLayout(getResolvedSetup(slot.getParentSetup()));
 			}
 
 			dataManager.updateConfig(true, false);
@@ -1829,7 +1915,7 @@ public class InventorySetupsPlugin extends Plugin
 			{
 				return;
 			}
-			layoutUtilities.recalculateLayout(slot.getParentSetup());
+			layoutUtilities.recalculateLayout(getResolvedSetup(slot.getParentSetup()));
 		});
 
 		dataManager.updateConfig(true, false);
@@ -1974,6 +2060,14 @@ public class InventorySetupsPlugin extends Plugin
 	{
 		if (isDeletionConfirmed("Are you sure you want to permanently delete this inventory setup?", "Warning"))
 		{
+
+			// Detach child setups so deleting a parent cannot leave dangling inheritance references.
+			List<InventorySetup> childSetups = cache.getChildSetupsByParentId().get(setup.getSetupId()) == null ?
+				new ArrayList<>() : new ArrayList<>(cache.getChildSetupsByParentId().get(setup.getSetupId()));
+			for (final InventorySetup childSetup : childSetups)
+			{
+				cache.updateParentSetup(childSetup, "");
+			}
 
 			// Remove the setup from any sections which have it
 			for (final InventorySetupsSection section : sections)
@@ -2238,7 +2332,7 @@ public class InventorySetupsPlugin extends Plugin
 				inventorySetups.add(newSetup);
 				// This will tag all the items in the setup for us, but don't use the layout.
 				// Use what's stored in the import.
-				Layout temp_layout_ = layoutUtilities.createSetupLayout(newSetup);
+				Layout temp_layout_ = layoutUtilities.createSetupLayout(getResolvedSetup(newSetup));
 				Layout newLayout = new Layout(temp_layout_.getTag(), newSetupPortable.getLayout());
 				layoutManager.saveLayout(newLayout);
 				tagManager.setHidden(newLayout.getTag(), true);
@@ -2305,7 +2399,7 @@ public class InventorySetupsPlugin extends Plugin
 
 					// This will tag all the items in the setup for us, but don't use the layout.
 					// Use what's stored in the import.
-					Layout temp_layout_ = layoutUtilities.createSetupLayout(inventorySetup);
+					Layout temp_layout_ = layoutUtilities.createSetupLayout(getResolvedSetup(inventorySetup));
 					Layout newLayout = new Layout(temp_layout_.getTag(), newUnprocessedLayouts.get(i));
 					layoutManager.saveLayout(newLayout);
 					tagManager.setHidden(newLayout.getTag(), true);
@@ -2506,7 +2600,8 @@ public class InventorySetupsPlugin extends Plugin
 
 	public boolean setupContainsItem(final InventorySetup setup, int itemID, boolean allowFuzzy, boolean canonicalize)
 	{
-		if (additionalFilteredItemsHasItem(itemID, setup.getAdditionalFilteredItems(), allowFuzzy, canonicalize))
+		final InventorySetup setupToCheck = getResolvedSetup(setup);
+		if (additionalFilteredItemsHasItem(itemID, setupToCheck.getAdditionalFilteredItems(), allowFuzzy, canonicalize))
 		{
 			return true;
 		}
